@@ -1,0 +1,33 @@
+{
+  "name": "pidec",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PIDEC 1.0 Platform — Prototype Inter-Departmental Engineering Challenge (ULES)",
+  "scripts": {
+    "dev": "pnpm -r --parallel --stream dev",
+    "dev:web": "pnpm --filter @pidec/web dev",
+    "dev:api": "pnpm --filter @pidec/api dev",
+    "build": "pnpm -r build",
+    "build:shared": "pnpm --filter @pidec/shared build && pnpm --filter @pidec/db-types build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,css}\""
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.12.3",
+  "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.9.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "jsonwebtoken": "^9.0.3"
+  }
+}

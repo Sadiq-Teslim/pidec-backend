@@ -1,0 +1,425 @@
+PROTOTYPE INTER-DEPARTMENTAL ENGINEERING CHALLENGE
+PIDEC 1.0
+WEBSITE PLATFORM
+Product Requirements Document (PRD)
+Version 5.0 — Consolidated
+Competitions & Technical Team  |  University of Lagos Engineering Society (ULES)
+1.   Product Overview
+1.1   What We Are Building
+The PIDEC 1.0 platform is a purpose-built web application serving four surfaces: a public landing page, a student competition dashboard, an admin console, and a judge portal. It replaces all manual submission workflows with a controlled, digital-first experience that is verifiable, auditable, and fully managed by the Competitions & Technical Team.
+1.2   Platform Goals
+Professional public face for PIDEC 1.0.
+Secure, verified registration for engineering students only (matric validation + AI document verification).
+Structured team formation with role clarity, 48-hour invite system, and pre-Stage-1 lock.
+Full submission lifecycle: Stage 1 proposals, Stage 2 video links + documentation, Stage 3 pre-Finale docs.
+Dedicated Judge Portal: one judge per department, independent scoring, Stage 1 rep selection.
+Feedback delivery from judges directly to teams on the platform.
+Complete admin control over every stage gate, verification, team movement, and content.
+Scalable and reusable for future PIDEC editions (2.0, 3.0, etc.).
+1.3   User Types
+1.4   Platform Versioning
+The platform supports multiple PIDEC editions (1.0, 2.0, 3.0) without a rebuild. Each edition has its own isolated theme, stages, teams, tokens, and submissions. A single admin account manages the active edition.
+2.   Public Landing Page
+Accessible without an account. Admin toggles drive visibility of CTAs and content sections.
+2.1   Sections
+Hero: PIDEC logo, edition name, theme, Register and Learn More CTAs (signup CTA conditionally shown based on admin toggle).
+About: mission, ULES context, what PIDEC is.
+Competition Stages: visual timeline of all three stages with dates. Active stage highlighted.
+Participating Departments: all 10 departments. Shows confirmed Stage 2 rep team names once announced.
+Theme: official PIDEC 1.0 theme displayed prominently with contextual description.
+Sponsors & Partners: logos and names managed via admin console. Hidden if empty.
+FAQ: accordion-style. Content managed by admin.
+Footer: ULES branding, PIDEC edition, contact email, competition rules link.
+3.   Authentication & Registration
+3.1   Sign Up Flow
+Step 1 — Basic Account Creation
+Full legal name.
+Email address (login credential).
+Password — minimum 8 characters, at least one letter and one number. bcrypt cost factor 10+. Strength indicator shown.
+Matric number — exactly 9 digits, YYFFDDXXX format. YY: 19–25, FF must be 04 (Engineering). Validated and normalised on input.
+Department — dropdown of all 10 engineering departments.
+Level — dropdown: 100, 200, 300, 400, 500.
+Step 2 — Document Upload
+Upload Exam Docket or Course Registration Form. Accepted: PDF, JPG, PNG. Max 5MB.
+File validated client-side (type + size) before any upload attempt.
+Upload is mandatory to proceed.
+Step 3 — Automated AI Verification (Async Queue)
+File buffer stored in Redis with 60s TTL — never written to disk or object storage.
+On upload, the job is enqueued in BullMQ. Signup endpoint returns 202 instantly.
+Background worker processes max 10 concurrent jobs (free-tier rate limit protection).
+Groq vision API (primary, free tier): vision prompt extracts name and matric number from document.
+Gemini API (fallback): triggers if Gemini fails, times out, or returns low confidence.
+Matric number normalised before comparison (slashes, spaces, hyphens stripped).
+Department extracted as secondary signal — mismatch flags for review, does not auto-reject.
+File buffer discarded immediately after AI call, regardless of outcome.
+Only verification_status, verification_method, and verification_timestamp written to DB.
+Verification Outcomes
+3.2   Account States
+3.3   Rate Limiting
+Registration: 5 attempts per IP per 10-minute window.
+Unique constraints: one account per email and per matric number at DB level.
+Re-upload: 3 attempts max, 10-minute cooldown between attempts.
+Login: 10 attempts per IP per 15 minutes. HTTP 429 with retry-after shown.
+3.4   Sign In & Session
+Login via email and password. JWT stored in HTTP-only, Secure, SameSite=Strict cookie.
+Access token: 15-minute expiry. Refresh token: 7-day expiry.
+Session expiry: 7-day JWT. 30-minute inactivity soft warning. Mid-form expiry preserves localStorage draft.
+Password reset via email link (Resend). Account state checked on every login.
+3.5   Signup Toggle
+Admin opens/closes registrations. When closed, signup page shows “Registrations not yet open.”
+Existing users can always log in regardless of signup toggle state.
+4.   Student Dashboard
+4.1   Dashboard Sections
+Status Bar
+Account verification status | Team name & role | Current competition stage | Stage status.
+Competition Stage Panel
+Visual Stepper: Stage 1 → Stage 2 → Grand Finale. Active stage highlighted.
+Team status: Not Yet Submitted | Submitted — Under Review | Feedback Available | Advanced | Disqualified.
+Disqualified teams: full-width persistent amber/red banner below nav: “Your team was disqualified at Stage [N].” Cannot be dismissed.
+Disqualified teams: read-only access to submissions and feedback from their eliminated stage only.
+My Team
+Team name, all members, roles, verification status.
+No team: options to Create Team or view pending invites.
+Pending invites shown with Accept / Decline. Polls every 60 seconds for expiry. Expired invites auto-disable buttons in-place.
+Submissions
+All team submissions grouped by stage. Status, submission date, feedback link when published.
+Active submission form appears when: window is open + team has not yet submitted + user is Team Leader.
+Autosave to localStorage every 30s and on field blur. Keyed by team_id + edition_id + stage.
+Draft restore prompt on form load. Draft cleared on submit or manual reset.
+Notifications
+In-platform feed via Supabase Realtime: invite received, accepted/declined, submission confirmed, advanced, feedback published, disqualified, team dissolved.
+Every notification has an action_url deep link.
+All key events also trigger Resend email from competitions@pidec.com.ng.
+5.   Team Management
+5.1   Team Creation
+Any verified, teamless student may create a team. Name must be unique within the edition.
+Department auto-populated from creator’s profile. Creator becomes Team Leader automatically.
+Team creation permitted only while team management is unlocked (before Stage 1 opens).
+5.2   Invite System (48-Hour)
+Team Leader searches by full name. Results: verified, teamless, same-department students only.
+Leader sends invite. Invitee notified on dashboard + by email.
+Invite active for 48 hours. Frontend polls every 60s. Expired invites auto-disable Accept/Decline.
+Invitee accepts or declines from their own dashboard. No auto-accept.
+Acceptance adds student as Team Member.
+5.3   Team Leader Rules
+Team Leader cannot leave directly. Must delete the team.
+Deleting a team notifies all members and returns them to teamless state. Permitted only before Stage 1 lock.
+If leader’s account is suspended post-lock: earliest-joining member is auto-promoted to leader. All members notified.
+Leadership cannot be manually transferred in v1.0.
+5.4   Composition Rules
+Minimum 3 members (including leader). Maximum 6 members.
+All members must be from the same department — enforced at the platform level.
+A student can only belong to one team at a time.
+5.5   Member Suspended Post-Lock
+If a member is suspended after the lock: removed from team. Leader notified.
+If removal drops team below 3 members: team flagged “Under Review.” Admin decides case-by-case. Submission blocked until resolved.
+5.6   Team Management Lock
+Locks automatically when admin opens Stage 1 submission window.
+After lock: no new invites, no member removal, no team deletion. Existing pending invites can still be accepted.
+Team Leader and all pending invitees notified when lock activates.
+5.7   Submission Token (Stage 1)
+12-character cryptographically random alphanumeric token generated per department.
+Department-scoped: token validates against both token string and submitting team’s department.
+Valid from issuance until Stage 1 deadline. Regeneratable by admin.
+Token use_count and last_used_at tracked on Token entity.
+6.   Submission System
+All submissions made via the PIDEC platform by the Team Leader only. One submission per stage per team. Enforced at DB level via unique constraint on (team_id, edition_id, stage). Idempotent endpoint returns existing submission on duplicate request within 5 seconds.
+6.1   General Submission Flow
+Admin opens submission window for current stage.
+Team Leader’s dashboard shows active form.
+Leader completes form. Live word count shown per field (Stage 1).
+Read-only review screen shown. Confirmation dialog before final submit.
+Submission locked on confirm. Timestamp and submitting user ID logged.
+Team notified via platform + email.
+6.2   Stage 1 Submission Form
+Requires department submission token to unlock form. All fields mandatory.
+Section 1: Problem Statement (300 word limit).
+Section 2: Proposed Engineering Solution (500 word limit).
+Section 3: Theme Alignment (250 word limit).
+Section 4: Preliminary Feasibility Assessment (400 word limit).
+Section 5: Departmental Relevance Declaration (150 word limit).
+Section 6: Team Declaration checkboxes (all must be checked).
+Word limits enforced server-side. Autosave to localStorage every 30s. Read-only review + confirmation before final submit.
+6.3   Stage 2 Submission
+Video Submission (All Teams)
+Every team — regardless of prototype type (software, hardware, simulation, hybrid) — records a video presenting and demonstrating their solution. The video submission process:
+Record a video of your solution demonstration.
+Upload to YouTube (set to Unlisted) or Google Drive (share with view access).
+Submit the video link on the PIDEC platform as part of the Stage 2 form.
+There is no physical submission or in-person inspection at Stage 2.
+Stage 2 Documentation (via Platform)
+Detailed design and technical documentation.
+Engineering decisions justification.
+Constraints and how addressed.
+Preliminary testing or validation results.
+Checkpoint progress reports (uploaded per checkpoint).
+Stage 2 Storage & Routing
+Non-video files uploaded to Supabase S3 (2 free buckets, merged at API layer). Files automatically routed to Google Drive: Drive/PIDEC1.0/Stage2/[Department]/[TeamName]/. Competitions & Technical Team shares folder with assigned judge. Judge accesses via platform which pulls from Drive.
+6.4   Stage 3 Submission
+Final solution documentation (rich text or PDF upload).
+Technical presentation slides (PDF or PPTX).
+Team declaration confirming readiness (checkbox).
+Grand Finale: teams present physical prototypes live on stage. Platform handles pre-Finale documentation only.
+7.   Feedback System
+7.1   How Feedback Works
+Judges submit scores and feedback via Judge Portal.
+Admin reviews all scores before publishing.
+Admin publishes feedback per team or all at once.
+On publish: team’s submission status updates to Feedback Available. Team notified via platform + email.
+Feedback is read-only for students.
+7.2   Feedback Display
+Overall score out of 100.
+Score breakdown per criterion (raw score + weight + weighted score).
+Written evaluator comments per criterion.
+Overall outcome: Advanced | Not Advanced | Pending.
+7.3   Visibility Controls
+Feedback not visible until admin explicitly publishes.
+Admin can publish per team or all at once.
+Disqualified teams see feedback only from the stage they were eliminated at.
+7b.   Judge Portal
+The Judge Portal is a dedicated platform interface for Stage 1 and Stage 2 judges. One judge is assigned per department per stage. Judges have their own platform accounts created by the admin and are routed to the Judge Portal on login. The Competitions & Technical Team does not score Stage 1 submissions — judges assess entirely at their own discretion.
+7b.1   Judge Accounts
+Created manually by admin. Scoped to a specific stage and assigned departments.
+Login via standard login page — routed to Judge Portal by account type.
+Cannot see submissions outside their department assignment.
+Deactivated by admin after judging window closes.
+7b.2   Stage 1 Judge Portal
+Unlimited teams from all 10 departments submit Stage 1 proposals.
+Each judge sees all submissions from their assigned department only.
+Judge reads all proposals independently at their own discretion.
+The Stage 1 Scoring Rubric is provided as a reference framework — not a mandatory scoring sheet.
+Judge selects one Representative Team per department — the team they judge strongest.
+All 10 representative teams advance to Stage 2. Stage 1 does not eliminate any department.
+Selections submitted to admin for confirmation before announcement.
+7b.3   Stage 2 Judge Portal
+Judge sees all 10 Stage 2 submissions (one per department) from assigned departments.
+All teams submit a video link. Judge views video via platform.
+Judge scores using Stage 2 Scoring Rubric with written comments per criterion.
+Top 5 teams by Stage 2 score advance to Grand Finale.
+Judge submits scores. Admin reviews before publishing to teams.
+7b.4   What Teams See
+No judge scores visible until admin publishes.
+Published: scores + criterion-by-criterion feedback on dashboard under stage submission.
+Teams cannot see other teams’ scores.
+8.   Admin Console
+Single admin account. Created directly in the database at deployment. Accessible via /admin/login — not linked from public site. Full access to all platform controls.
+8.1   Admin Capabilities
+Judge Account Management
+Create/deactivate judge accounts with stage scope and assigned departments.
+View all judge scores. Publish or hold before release to teams.
+Notified when all judges for a stage complete scoring.
+Competition Settings
+Set/update PIDEC edition, theme, and active stage.
+Open/close student registrations (single toggle).
+Create new edition for future competitions.
+Stage Management
+Set active stage (1, 2, or 3). Updates all dashboards immediately.
+Open/close submission window per stage. Opening Stage 1 window auto-locks team management.
+Create and manage Stage 2 checkpoints.
+Flagged Verifications Queue
+Admin sees AI-extracted values vs submitted values side by side. Document is never stored.
+Actions: Approve | Reject (with reason) | Request Resubmission.
+24-hour SLA. Admin receives email on each flag. Reminder after 24hrs if unresolved.
+Student Directory
+Searchable, filterable list. Name, matric, dept, level, account state, team.
+Suspend/unsuspend any account. Override verification state.
+Team Directory & Stage Movement
+All teams: name, dept, leader, member count, stage, submission status.
+Manually advance or disqualify individual teams. Bulk advance all qualifying teams.
+Unlock specific team’s submission window for authorised resubmission.
+Submission Token Management
+Generate, view, copy department tokens. Regenerate if compromised.
+Token table shows use_count and last_used_at per department.
+Submission Review & Feedback
+View all submissions per stage, filterable by dept/team/status.
+Enter scores and comments per criterion on behalf of review process.
+Publish feedback per team or all at once.
+Content Management
+Update landing page: sponsors, FAQs, partner logos, announcement banners.
+Platform-wide announcement banner on all dashboards.
+Data Export
+Export: student list (CSV), team list (CSV), submissions per stage (ZIP/CSV), scores (CSV).
+Scoped to active edition.
+9.   User Stories
+9.1   Registration & Verification
+9.2   Team Management
+9.3   Submissions
+9.4   Feedback & Progress
+9.5   Judge Portal
+9.6   Admin
+10.   Non-Functional Requirements
+10.1   Performance
+API response target: ≤100ms (p95) for all standard CRUD endpoints.
+DB query target: ≤20ms. All frequently queried columns indexed.
+3,000+ concurrent users without degradation.
+BullMQ queue capped at 10 concurrent AI jobs. Backoff strategy under burst load.
+Page load ≤2s on 3G mobile.
+10.2   Security
+HTTPS everywhere. JWTs in HTTP-only, Secure, SameSite=Strict cookies.
+Supabase service role key: backend only, never exposed to client.
+RLS on all Supabase tables. Frontend uses anon key only.
+Rate limiting on all endpoints (Redis-backed).
+Verification document uploads: never stored, buffer only, validated by MIME magic bytes.
+All inputs validated with Zod before touching business logic.
+Helmet.js headers. CORS restricted to app URL. CSRF protection.
+Structured logging (Pino). No PII, no file content, no tokens in logs.
+Error responses: no internal stack traces in production.
+10.3   Accessibility & Device Support
+WCAG 2.1 Level AA. 4.5:1 contrast for text, 3:1 for UI components.
+Mobile-first. Minimum viewport: 360px.
+Supported browsers: Chrome 90+, Firefox 90+, Safari 14+, Samsung Internet 14+, Chrome for Android 90+.
+Breakpoints: 360px, 768px, 1024px, 1440px.
+All interactive elements keyboard navigable. All form fields have labels.
+10.4   Data Integrity
+Soft delete pattern on all entities (deleted_at). AdminLog is append-only, never deleted.
+All admin actions logged to AdminLog with before_value and after_value (jsonb).
+Unique DB constraint on (team_id, edition_id, stage) prevents duplicate submissions.
+Verification documents never persisted. Only result and timestamp stored.
+10.5   Scalability
+Multi-edition architecture. Each edition data-isolated.
+Stage and form config is dynamic, not hardcoded.
+Supabase pgBouncer connection pooling (transaction mode).
+11.   Architecture Overview
+11.1   Recommended Stack
+11.2   Data Entities
+11.3   Soft Delete & Audit Standard
+All entities (except AdminLog) have deleted_at (nullable timestamp). Active records: deleted_at IS NULL.
+Soft-deleted records fully accessible to admin console.
+AdminLog: append-only. No updates, no deletes. Every admin action logged with before and after values.
+12.   Out of Scope (v1.0)
+Real-time chat or messaging between team members on the platform.
+Mentor-facing portal or mentor account types.
+Public leaderboard or live scoring display during evaluation.
+Native mobile application (iOS or Android).
+OAuth login (Google, etc.) — email/password only in v1.0.
+Multiple admin accounts or role-based access control (RBAC).
+Automated Google Drive folder creation — managed manually by Competitions & Technical Team.
+Payment or ticketing functionality.
+Multi-language support.
+13.   Open Questions
+PIDEC 1.0  •  Website Platform PRD v5.0 (Consolidated)  •  Competitions & Technical Team  •  April 2026
+This is the single source of truth for the PIDEC platform. All prior versions (v1–v4) are superseded by this document.
+===TABLES===
+--TABLE 0--
+Document Type | Product Requirements Document (PRD) — Consolidated
+Product | PIDEC 1.0 Official Website & Competition Platform
+Version | v5.0 — Consolidated (all prior versions merged)
+Date | April 2026
+Owner | Competitions & Technical Team
+Stack | Next.js 14 / TypeScript • Node.js/TS • Supabase • Mantine UI
+Platform Email | competitions@pidec.com.ng
+Status | Pending Chairman Sign-Off (Faisal)
+--TABLE 1--
+Version History
+v1 – Initial PRD: public landing page, student auth, team management, submission system, admin console.
+v2 – AI verification: Gemini primary + Groq fallback, file never stored, Redis TTL buffer.
+v3 – Tech decisions: Next.js/TS frontend, Node.js/TS backend, Resend email, single admin account, judge scoring via admin, disqualified team dashboard, email notifications.
+v4 – QA (31 issues): BullMQ queue, rate limiting, matric validation, autosave, session expiry, soft delete, team integrity policies, browser support, SLA, invite expiry UX, and 20+ others.
+v5 – Chairman (Faisal) review: unlimited Stage 1 teams per dept, judge selects rep team per dept, Judge Portal added, Stage 2 video link submission (no physical), Supabase S3 + Google Drive routing.
+--TABLE 2--
+User Type | Who They Are | Primary Purpose
+Public Visitor | Anyone browsing the site | Learn about PIDEC, view info, sign up
+Student (Unverified) | Engineering student, signed up | Upload verification doc, await AI approval
+Student (Verified) | Confirmed engineering student | Create/join team, submit, receive feedback
+Team Leader | Student who created the team | Manage team, invites, submissions
+Team Member | Verified student who accepted invite | View team, submissions, feedback
+Judge | Assigned evaluator (Stage 1 or Stage 2) | Score submissions, select rep teams (S1)
+Admin | Competitions & Technical Team operator | Control all platform settings and data
+--TABLE 3--
+Outcome | Condition | What Happens
+Auto-Verified | Name + matric match with high confidence. | Account verified instantly. Student gets dashboard access.
+Auto-Rejected | Name or matric clearly do not match, or document unreadable. | Student sees specific reason + attempt count (1 of 3). 10-min cooldown between re-uploads. 3-attempt max.
+Flagged for Review | Both Gemini and Groq return low confidence or both fail. | Admin notified. 24hr SLA. Admin sees AI-extracted vs submitted values.
+--TABLE 4--
+State | What It Means
+Pending | Queue processing. Student sees processing screen. Resolves within seconds typically.
+Verified | AI confirmed name + matric match. Full dashboard access.
+Rejected | Mismatch detected. Re-upload shown with attempt count + 10-min cooldown. Max 3 attempts.
+Flagged | Escalated to admin. 24hr SLA. Student sees amber notice.
+Suspended | Admin manually suspended. No platform access.
+--TABLE 5--
+Invite Expiry
+Expired invites do not count against limits. Leader can re-invite after expiry. When team lock triggers, existing pending invites remain active — they can still be accepted post-lock. No new invites can be sent after lock. Invitees notified at lock time that this is their last chance to accept.
+--TABLE 6--
+Video Requirement
+A submission without a valid, accessible video link is incomplete and will not be evaluated. YouTube: must be Unlisted. Google Drive: must be shared with Anyone with the link (Viewer).
+--TABLE 7--
+ID | Role | I want to... | So that... | Priority
+US-01 | Student | sign up with name, email, matric number, dept, and level | I can create a PIDEC account | Must Have
+US-02 | Student | upload my exam docket or course form | my eligibility as an engineering student can be verified | Must Have
+US-03 | Student | see my verification status and processing state clearly | I know whether my account is approved, pending, or rejected | Must Have
+US-04 | Student | re-upload my document if rejected, up to 3 times | I can correct mistakes and still participate | Must Have
+US-05 | Student | reset my password via email | I can regain access if I forget credentials | Must Have
+--TABLE 8--
+ID | Role | I want to... | So that... | Priority
+US-06 | Student | create a team with a unique name | I can represent my department | Must Have
+US-07 | Team Leader | search for same-department verified students and invite them | I can build a team without external coordination | Must Have
+US-08 | Student | accept or decline a team invite from my dashboard | I have full control over which team I join | Must Have
+US-09 | Team Leader | be notified when an invite expires and re-invite the student | I can follow up without tracking expiries manually | Must Have
+US-10 | Team Leader | remove a member before Stage 1 lock | I can manage team composition in time | Must Have
+US-11 | Team Leader | delete the team to leave it | I understand the full consequence before leaving | Must Have
+US-12 | Team Leader | be notified when team management locks | I know the deadline for team changes | Must Have
+--TABLE 9--
+ID | Role | I want to... | So that... | Priority
+US-13 | Team Leader | enter our dept token to unlock the Stage 1 form | our submission is department-authorised | Must Have
+US-14 | Team Leader | see a live word count as I write each section | I stay within limits before submitting | Must Have
+US-15 | Team Leader | review all my answers before final submit | I don’t accidentally submit incomplete work | Must Have
+US-16 | Team Leader | submit a video link for Stage 2 alongside documentation | judges can evaluate our prototype remotely | Must Have
+US-17 | Team Member | view all team submissions and their statuses | I’m always informed of where we stand | Must Have
+--TABLE 10--
+ID | Role | I want to... | So that... | Priority
+US-18 | Team Member | view detailed feedback per criterion once published | I understand our scores and what to improve | Must Have
+US-19 | Team Member | see which stage my team is currently in | I always know our competition status | Must Have
+US-20 | Team Member | receive a notification when my team is advanced or eliminated | I’m informed of major decisions immediately | Must Have
+--TABLE 11--
+ID | Role | I want to... | So that... | Priority
+US-21 | Judge | view all submissions from my assigned departments | I can evaluate every entry I’m responsible for | Must Have
+US-22 | Judge (S1) | select the representative team from my assigned dept | the department’s best proposal is officially chosen | Must Have
+US-23 | Judge (S2) | score each team on the rubric and add written feedback | teams receive structured evaluations | Must Have
+US-24 | Judge (S2) | view each team’s submitted video link directly on the platform | I can evaluate the demo without leaving the portal | Must Have
+--TABLE 12--
+ID | Role | I want to... | So that... | Priority
+US-25 | Admin | open and close student registrations | I control when the public can sign up | Must Have
+US-26 | Admin | review flagged verifications and approve or reject | edge cases are resolved accurately | Must Have
+US-27 | Admin | create and deactivate judge accounts with stage + dept scope | judges only see what they’re meant to evaluate | Must Have
+US-28 | Admin | set the current active stage | the platform reflects the correct state for all users | Must Have
+US-29 | Admin | open and close submission windows per stage | teams can only submit during designated windows | Must Have
+US-30 | Admin | generate and view submission tokens per department | I can distribute them to Dept Reps | Must Have
+US-31 | Admin | view all submissions and enter scores/feedback | teams receive evaluations | Must Have
+US-32 | Admin | publish feedback to teams individually or all at once | I control when teams see their results | Must Have
+US-33 | Admin | manually advance or disqualify teams | I can manage stage progression with full control | Must Have
+US-34 | Admin | export all team and submission data | I have offline records for auditing | Should Have
+US-35 | Admin | create a new edition for PIDEC 2.0 | the platform is reused without a rebuild | Should Have
+--TABLE 13--
+Layer | Technology
+Frontend | Next.js 14 (TypeScript, App Router). SSR for landing page SEO. CSR for dashboard.
+UI Library | Mantine — ALL components. No mixing. Themed globally via MantineProvider.
+Fonts | Plus Jakarta Sans (headings, 700/800) + DM Sans (body, 400/500/600) via next/font.
+Backend / API | Node.js + TypeScript (Express or Hono). Clean Architecture. RESTful, versioned at /api/v1/.
+Database | Supabase (PostgreSQL). RLS on all tables. Generated TypeScript types.
+Auth | Supabase Auth. JWTs in HTTP-only cookies. 15-min access token, 7-day refresh.
+File Storage | Supabase S3 (2 free buckets, merged at API). Verification docs: never stored.
+File Routing | Google Drive. Organised by stage/department. Managed by Competitions & Technical Team.
+Queue | BullMQ + Redis. AI verification pipeline. Max 10 concurrent jobs.
+AI Verification | Groq vision API (primary, free tier) + Groq vision (fallback). Triggers: failure, timeout, or low confidence.
+Email | Resend. From: competitions@pidec.com.ng. All key events trigger email.
+Icons | Tabler Icons (@tabler/icons-react). Named imports only.
+Validation | Zod. Shared schemas between frontend and backend.
+--TABLE 14--
+Entity | Key Fields
+Edition | id, name, theme, active_stage, signup_open, team_management_locked, submission_window_open, created_at, deleted_at
+User | id, name, email, password_hash, matric_number, department, level, verification_status, verification_method (gemini/groq/manual), verification_timestamp, is_suspended, suspended_at, team_id, deleted_at
+Team | id, name, department, leader_id, edition_id, current_stage, status (active/disqualified), disqualified_at_stage, disqualified_at, created_at, deleted_at
+TeamInvite | id, team_id, invitee_id, invited_by, status (pending/accepted/declined/expired), expires_at, created_at, deleted_at
+Submission | id, team_id, edition_id, stage (1/2/3), form_data (jsonb), files (array of {url,filename,size_bytes,mimetype,uploaded_at}), video_link, submitted_at, status, is_locked, deleted_at
+Feedback | id, submission_id, scores (jsonb), comments (jsonb), total_score, published, published_at, entered_by_admin, evaluator_name, evaluation_date, deleted_at
+Judge | id, name, email, password_hash, stage_scope, assigned_departments (array), edition_id, is_active, created_at, deactivated_at
+Token | id, department, token_string, edition_id, expires_at, use_count, last_used_at, deleted_at
+Notification | id, user_id, type, message, action_url, read, created_at, deleted_at
+AdminLog | id, admin_id, action, target_type, target_id, before_value (jsonb), after_value (jsonb), timestamp — NEVER soft deleted, append-only
+--TABLE 15--
+# | Question | Context | Owner
+1 | Who develops the platform — Teslim alone or with Ebube? | Affects sprint planning and timeline. | Chairman
+2 | Exact website launch date? | Targeting April end 2026. TBA by Chairman. Must go live before Stage 1. | Chairman
+3 | Should matric numbers be restricted to unilag.edu.ng email domain? | Matric validation (FF=04) already limits to engineering. Email restriction adds a second layer but may exclude students who don’t use institutional email. | C&T Team
+4 | Should eliminated teams receive a disqualification email with a reason? | Assumed yes — confirm. | C&T Team
