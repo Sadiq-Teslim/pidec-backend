@@ -1,0 +1,30 @@
+import cors from 'cors';
+import helmet from 'helmet';
+import { type RequestHandler } from 'express';
+import { env, isProd } from '../../shared/config/env.js';
+
+/** Helmet config — strict in production, slightly relaxed in dev. */
+export const securityHeaders: RequestHandler = helmet({
+  contentSecurityPolicy: isProd
+    ? {
+        useDefaults: true,
+        directives: {
+          defaultSrc: ["'self'"],
+          imgSrc: ["'self'", 'data:', 'https:'],
+          // Resend webhook + Supabase URL allowed
+          connectSrc: ["'self'", env.NEXT_PUBLIC_SUPABASE_URL, 'https://api.resend.com'],
+        },
+      }
+    : false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+});
+
+/** CORS — only the configured origin is allowed (master spec security §). */
+export const corsMiddleware: RequestHandler = cors({
+  origin: env.CORS_ORIGIN.split(',').map((o) => o.trim()),
+  credentials: true,
+  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  maxAge: 86_400,
+});

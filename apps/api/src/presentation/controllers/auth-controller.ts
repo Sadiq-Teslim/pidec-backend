@@ -1,0 +1,356 @@
+import { type RequestHandler } from 'express';
+import { AuthService } from '../../domain/services/auth-service.js';
+import { getVerificationWorkflowService } from '../../domain/services/verification-workflow-service.js';
+import { verifyToken, getTokenExpirySeconds } from '../../infrastructure/auth/jwt.js';
+import { AppError } from '../../shared/errors/app-error.js';
+import { logger } from '../../shared/logger/index.js';
+
+const authService = new AuthService();
+const verificationWorkflowService = getVerificationWorkflowService();
+
+/**
+ * POST /auth/register
+ * Register a new user (student, judge, or admin).
+ * Body: { email, password, name, role?, matricNumber?, department?, level? }
+ */
+export const register: RequestHandler = async (req, res, next) => {
+  try {
+    const { email, password, name, role = 'student', matricNumber, department, level } = req.body;
+
+    const { user, tokens } = await authService.register(
+      email,
+      password,
+      name,
+      role,
+      matricNumber,
+      department,
+      level,
+    );
+
+    // Send verification email
+    try {
+      await authService.requestEmailVerification(user.id, user.email, user.name);
+    } catch (emailErr) {
+      logger.error({ userId: user.id, error: emailErr }, 'Failed to send verification email');
+      // Don't fail registration if email sending fails
+    }
+
+    // Set HTTP-only, Secure, SameSite=Strict cookies
+    res.cookie('access-token', tokens.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    res.cookie('refresh-token', tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    logger.info({ userId: user.id, email: user.email }, 'User registered');
+
+    res.status(201).json({
+      status: 'success',
+      data: {
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /auth/login
+ * Login user with email and password.
+ * Body: { email, password }
+ */
+export const login: RequestHandler = async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+
+    const { user, tokens } = await authService.login(email, password);
+
+    // Set HTTP-only, Secure, SameSite=Strict cookies
+    res.cookie('access-token', tokens.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    res.cookie('refresh-token', tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    logger.info({ userId: user.id, email: user.email }, 'User logged in');
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /auth/refresh
+ * Refresh access token using the refresh token cookie.
+ * No body required — uses refresh-token cookie.
+ */
+export const refresh: RequestHandler = async (req, res, next) => {
+  try {
+    const refreshToken =
+      (req as unknown as { cookies?: Record<string, string> }).cookies?.['refresh-token'] ?? null;
+
+    if (!refreshToken) {
+      throw AppError.unauthenticated('Refresh token missing');
+    }
+
+    // Verify refresh token
+    const payload = verifyToken(refreshToken);
+
+    if (payload.type !== 'refresh') {
+      throw AppError.unauthenticated('Invalid token type');
+    }
+
+    // Generate new access token (same payload structure)
+    const { generateAccessToken } = await import('../../infrastructure/auth/jwt.js');
+    const newAccessToken = generateAccessToken({
+      sub: payload.sub,
+      email: payload.email,
+      role: payload.role,
+    });
+
+    // Set new access token cookie
+    res.cookie('access-token', newAccessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    logger.debug({ userId: payload.sub }, 'Access token refreshed');
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        accessToken: newAccessToken,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /auth/logout
+ * Logout user by clearing auth cookies.
+ * No body required.
+ */
+export const logout: RequestHandler = async (req, res) => {
+  res.clearCookie('access-token');
+  res.clearCookie('refresh-token');
+
+  if (req.user) {
+    logger.info({ userId: req.user.id }, 'User logged out');
+  }
+
+  res.status(200).json({
+    status: 'success',
+  });
+};
+
+/**
+ * GET /auth/me
+ * Get current authenticated user from JWT.
+ * Requires authentication.
+ */
+export const me: RequestHandler = (req, res) => {
+  if (!req.user) {
+    return res.status(401).json({
+      status: 'error',
+      code: 'AUTH_REQUIRED',
+      message: 'Authentication required',
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        role: req.user.role,
+      },
+    },
+  });
+};
+
+/**
+ * POST /auth/verify-email
+ * Verify user's email using a verification token from email.
+ * Body: { token }
+ */
+export const verifyEmailToken: RequestHandler = async (req, res, next) => {
+  try {
+    const { token } = req.body;
+
+    if (!token || typeof token !== 'string') {
+      throw AppError.validation('Verification token is required');
+    }
+
+    const user = await authService.consumeEmailVerificationToken(token);
+
+    logger.info({ userId: user.id, email: user.email }, 'Email verified');
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /auth/forgot-password
+ * Request a password reset email.
+ * Body: { email }
+ * Note: Always returns 200 for security (doesn't reveal if account exists)
+ */
+export const forgotPassword: RequestHandler = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || typeof email !== 'string') {
+      throw AppError.validation('Email is required');
+    }
+
+    await authService.requestPasswordReset(email);
+
+    // Always return success to avoid user enumeration
+    res.status(200).json({
+      status: 'success',
+      message: 'If an account exists with that email, a password reset link will be sent.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /auth/reset-password
+ * Reset password using a token from email.
+ * Body: { token, password }
+ */
+export const resetPassword: RequestHandler = async (req, res, next) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || typeof token !== 'string') {
+      throw AppError.validation('Password reset token is required');
+    }
+
+    if (!password || typeof password !== 'string') {
+      throw AppError.validation('New password is required');
+    }
+
+    const user = await authService.consumePasswordResetToken(token, password);
+
+    logger.info({ userId: user.id, email: user.email }, 'Password reset successful');
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /auth/verification-document
+ * Upload a verification document and enqueue async verification.
+ * Requires authentication. Multipart form field: document
+ */
+export const uploadVerificationDocument: RequestHandler = async (req, res, next) => {
+  try {
+    if (!req.user) throw AppError.unauthenticated();
+
+    const file = (req as unknown as { file?: Express.Multer.File }).file;
+    if (!file) {
+      throw AppError.validation('Verification document is required');
+    }
+
+    const status = await verificationWorkflowService.submitDocument(req.user.id, {
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      size: file.size,
+      originalname: file.originalname,
+    });
+
+    res.status(202).json({
+      status: 'success',
+      data: {
+        queued: true,
+        verification: status,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * GET /auth/verification-status
+ * Returns current verification status and re-upload constraints.
+ */
+export const getVerificationStatus: RequestHandler = async (req, res, next) => {
+  try {
+    if (!req.user) throw AppError.unauthenticated();
+
+    const status = await verificationWorkflowService.getStatus(req.user.id);
+    res.status(200).json({
+      status: 'success',
+      data: {
+        verification: status,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
