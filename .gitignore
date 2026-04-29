@@ -44,5 +44,19 @@ next-env.d.ts
 _design_system.txt
 _prd.txt
 
+# Local Netlify folder
+.netlify
+.svelte-kit
+
+# Documentation and Temporary Files
+*.md
+!README.md
+*.docx
+design_system.txt
+prd.txt
+spin.html
+PIDEC_implementation_status.mdxt
+_prd.txt
+
 # Supabase local (not used — manual migrations only)
 .supabase/
