@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: pidec-api
+    env: node
+    buildCommand: pnpm install && pnpm run build
+    startCommand: cd apps/api && pnpm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Important: Define all these secrets in your Render Dashboard
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WEB_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
