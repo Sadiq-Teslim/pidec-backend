@@ -2,7 +2,7 @@ services:
   - type: web
     name: pidec-api
     env: node
-    buildCommand: pnpm install && pnpm run build
+    buildCommand: NODE_ENV=development pnpm install && pnpm run build:shared && cd apps/api && pnpm run build
     startCommand: cd apps/api && pnpm run start
     envVars:
       - key: NODE_ENV
