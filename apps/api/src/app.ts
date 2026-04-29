@@ -6,6 +6,8 @@ import { errorHandler, notFoundHandler } from './presentation/middleware/error-h
 import { globalRateLimiter } from './presentation/middleware/rate-limit.js';
 import { v1Router } from './presentation/routes/index.js';
 import { logger } from './shared/logger/index.js';
+import swaggerUi from 'swagger-ui-express';
+import { swaggerDocument } from './presentation/docs/swagger.js';
 
 /**
  * Build the Express app. Separated from server bootstrap so tests can
@@ -29,6 +31,12 @@ export const createApp = (): Express => {
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: false, limit: '1mb' }));
   app.use(cookieParser());
+
+  // API Documentation (Swagger)
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+    customSiteTitle: 'PIDEC API Documentation',
+    customCss: '.swagger-ui .topbar { display: none }',
+  }));
 
   // API
   app.use('/api/v1', v1Router);
