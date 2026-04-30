@@ -19,7 +19,7 @@ const EnvSchema = z.object({
   // anon key may also be present but the API only uses the service role key
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(20).optional(),
 
-  REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
+  REDIS_URL: z.string().url().optional(),
 
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().default('PIDEC 1.0 <competitions@pidec.com.ng>'),

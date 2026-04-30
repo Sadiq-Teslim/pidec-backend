@@ -21,17 +21,22 @@ export class VerificationQueue {
   private processor: Processor | null = null;
 
   constructor() {
-    try {
-      this.connection = new Redis(env.REDIS_URL, {
-        maxRetriesPerRequest: null,
-        enableReadyCheck: false,
-        lazyConnect: true,
-      });
-      this.queue = new Queue<VerificationJobPayload>(this.queueName, {
-        connection: this.connection,
-      });
-    } catch (err) {
-      logger.warn({ err }, 'Failed to initialize BullMQ queue; async verification will run inline');
+    if (env.REDIS_URL) {
+      try {
+        this.connection = new Redis(env.REDIS_URL, {
+          maxRetriesPerRequest: null,
+          enableReadyCheck: false,
+          lazyConnect: true,
+        });
+        this.queue = new Queue<VerificationJobPayload>(this.queueName, {
+          connection: this.connection,
+        });
+      } catch (err) {
+        logger.warn({ err }, 'Failed to initialize BullMQ queue; async verification will run inline');
+        this.connection = null;
+        this.queue = null;
+      }
+    } else {
       this.connection = null;
       this.queue = null;
     }

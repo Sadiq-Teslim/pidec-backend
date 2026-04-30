@@ -18,17 +18,21 @@ export class VerificationBufferStore {
   private readonly memory = new Map<string, MemoryEntry>();
 
   constructor() {
-    try {
-      this.redis = new Redis(env.REDIS_URL, {
-        maxRetriesPerRequest: 1,
-        enableReadyCheck: false,
-        lazyConnect: true,
-      });
-      this.redis.on('error', (err) => {
-        logger.warn({ err }, 'Verification buffer store Redis error; falling back to memory store');
-      });
-    } catch (err) {
-      logger.warn({ err }, 'Failed to initialize Redis buffer store; using memory fallback');
+    if (env.REDIS_URL) {
+      try {
+        this.redis = new Redis(env.REDIS_URL, {
+          maxRetriesPerRequest: 1,
+          enableReadyCheck: false,
+          lazyConnect: true,
+        });
+        this.redis.on('error', (err) => {
+          logger.warn({ err }, 'Verification buffer store Redis error; falling back to memory store');
+        });
+      } catch (err) {
+        logger.warn({ err }, 'Failed to initialize Redis buffer store; using memory fallback');
+        this.redis = null;
+      }
+    } else {
       this.redis = null;
     }
   }
