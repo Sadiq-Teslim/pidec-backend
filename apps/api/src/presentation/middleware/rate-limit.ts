@@ -1,8 +1,11 @@
 import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
+import type { RedisReply } from 'rate-limit-redis';
 import Redis from 'ioredis';
+import type { Request } from 'express';
 import { env } from '../../shared/config/env.js';
 import { ERROR_CODES, type ApiError } from '@pidec/shared';
+import { verifyToken } from '../../infrastructure/auth/jwt.js';
 
 const redisClient = env.REDIS_URL ? new Redis(env.REDIS_URL, {
   maxRetriesPerRequest: null,
@@ -11,14 +14,14 @@ const redisClient = env.REDIS_URL ? new Redis(env.REDIS_URL, {
 }) : null;
 
 if (redisClient) {
-  redisClient.on('error', (err) => {
+  redisClient.on('error', () => {
     // Silent fail - the store will fallback to memory if connection fails
   });
 }
 
 // Helper to standardise the 429 response
 const createRateLimitResponse = (message: string) => {
-  return (req: any, res: any) => {
+  return (_req: unknown, res: { status: (code: number) => { json: (body: ApiError) => void } }) => {
     const body: ApiError = {
       success: false,
       error: {
@@ -30,14 +33,56 @@ const createRateLimitResponse = (message: string) => {
   };
 };
 
+const getRateLimitKey = (req: Request): string => {
+  const bearer = req.headers.authorization?.startsWith('Bearer ')
+    ? req.headers.authorization.slice('Bearer '.length)
+    : null;
+  const cookieToken = req.cookies?.['access-token'] ?? null;
+  const token = bearer ?? cookieToken;
+
+  if (token) {
+    try {
+      const payload = verifyToken(token);
+      if (payload.type === 'access') {
+        return `user:${payload.sub}`;
+      }
+    } catch {
+      // fall back to IP key
+    }
+  }
+
+  return `ip:${req.ip ?? 'unknown'}`;
+};
+
+const getGlobalRateLimit = (req: Request): number => {
+  const bearer = req.headers.authorization?.startsWith('Bearer ')
+    ? req.headers.authorization.slice('Bearer '.length)
+    : null;
+  const cookieToken = req.cookies?.['access-token'] ?? null;
+  const token = bearer ?? cookieToken;
+
+  if (!token) return env.RATE_LIMIT_GLOBAL_ANON_MAX;
+
+  try {
+    const payload = verifyToken(token);
+    return payload.type === 'access' ? env.RATE_LIMIT_GLOBAL_AUTH_MAX : env.RATE_LIMIT_GLOBAL_ANON_MAX;
+  } catch {
+    return env.RATE_LIMIT_GLOBAL_ANON_MAX;
+  }
+};
+
+const redisSendCommand = (...args: string[]): Promise<RedisReply> =>
+  redisClient?.call(args[0]!, ...args.slice(1)) as Promise<RedisReply>;
+
 export const globalRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 100,
+  windowMs: env.RATE_LIMIT_GLOBAL_WINDOW_MS,
+  limit: getGlobalRateLimit,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
+  keyGenerator: getRateLimitKey,
   ...(redisClient ? {
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(args[0] as string, ...args.slice(1)) as any,
+      sendCommand: redisSendCommand,
       prefix: 'rl:global:',
     })
   } : {}),
@@ -45,13 +90,13 @@ export const globalRateLimiter = rateLimit({
 });
 
 export const registerRateLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,
-  limit: 5,
+  windowMs: env.RATE_LIMIT_REGISTRATION_WINDOW_MS,
+  limit: env.RATE_LIMIT_REGISTRATION_MAX,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   ...(redisClient ? {
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(args[0] as string, ...args.slice(1)) as any,
+      sendCommand: redisSendCommand,
       prefix: 'rl:register:',
     })
   } : {}),
@@ -59,13 +104,13 @@ export const registerRateLimiter = rateLimit({
 });
 
 export const loginRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
+  windowMs: env.RATE_LIMIT_LOGIN_WINDOW_MS,
+  limit: env.RATE_LIMIT_LOGIN_MAX,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   ...(redisClient ? {
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(args[0] as string, ...args.slice(1)) as any,
+      sendCommand: redisSendCommand,
       prefix: 'rl:login:',
     })
   } : {}),

@@ -1,9 +1,14 @@
 import express, { type Express } from 'express';
 import cookieParser from 'cookie-parser';
 import pinoHttp from 'pino-http';
-import { corsMiddleware, securityHeaders } from './presentation/middleware/security.js';
+import {
+  corsMiddleware,
+  originCheckMiddleware,
+  securityHeaders,
+} from './presentation/middleware/security.js';
 import { errorHandler, notFoundHandler } from './presentation/middleware/error-handler.js';
 import { globalRateLimiter } from './presentation/middleware/rate-limit.js';
+import { responseEnvelopeMiddleware } from './presentation/middleware/response-envelope.js';
 import { v1Router } from './presentation/routes/index.js';
 import { logger } from './shared/logger/index.js';
 import swaggerUi from 'swagger-ui-express';
@@ -25,12 +30,14 @@ export const createApp = (): Express => {
   // Security
   app.use(securityHeaders);
   app.use(corsMiddleware);
-  app.use(globalRateLimiter);
 
   // Parsers
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: false, limit: '1mb' }));
   app.use(cookieParser());
+  app.use(globalRateLimiter);
+  app.use(originCheckMiddleware);
+  app.use(responseEnvelopeMiddleware);
 
   // API Documentation (Swagger)
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {

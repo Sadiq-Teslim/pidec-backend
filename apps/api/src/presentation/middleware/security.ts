@@ -2,6 +2,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { type RequestHandler } from 'express';
 import { env, isProd } from '../../shared/config/env.js';
+import { AppError } from '../../shared/errors/app-error.js';
 
 /** Helmet config — strict in production, slightly relaxed in dev. */
 export const securityHeaders: RequestHandler = helmet({
@@ -28,3 +29,26 @@ export const corsMiddleware: RequestHandler = cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   maxAge: 86_400,
 });
+
+const allowedOrigins = new Set(env.CORS_ORIGIN.split(',').map((origin) => origin.trim()));
+const stateChangingMethods = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
+export const originCheckMiddleware: RequestHandler = (req, _res, next) => {
+  if (!stateChangingMethods.has(req.method)) {
+    next();
+    return;
+  }
+
+  const origin = req.headers.origin;
+  if (!origin) {
+    next();
+    return;
+  }
+
+  if (!allowedOrigins.has(origin)) {
+    next(AppError.forbidden('Origin is not allowed for this action'));
+    return;
+  }
+
+  next();
+};

@@ -10,6 +10,8 @@ import { isProd } from '../../shared/config/env.js';
  * envelope. Stack traces are logged but never returned to the client in
  * production.
  */
+// Express only treats this as an error middleware when all 4 parameters exist.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   // Already-handled response
   if (res.headersSent) return;

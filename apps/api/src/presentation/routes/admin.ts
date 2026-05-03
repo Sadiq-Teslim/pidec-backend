@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import {
   SetActiveStageSchema,
@@ -57,12 +57,12 @@ import {
   deactivateJudge,
   enterFeedback,
   publishFeedback,
-} from '../controllers/admin-controller.js';
-import {
   exportStudents,
   exportTeams,
   exportSubmissions,
   exportScores,
+} from '../controllers/admin-controller.js';
+import {
   listSponsors,
   createSponsor,
   updateSponsor,
@@ -81,12 +81,60 @@ const UserParamsSchema = z.object({ userId: UuidSchema });
 const TeamParamsSchema = z.object({ teamId: UuidSchema });
 const JudgeParamsSchema = z.object({ judgeId: UuidSchema });
 const SubmissionParamsSchema = z.object({ submissionId: UuidSchema });
+const StudentParamsSchema = z.object({ userId: UuidSchema });
+
+const forceStudentRole: RequestHandler = (req, _res, next) => {
+  req.query = { ...req.query, role: 'student' };
+  next();
+};
+
+const forceFlaggedVerificationStatus: RequestHandler = (req, _res, next) => {
+  req.query = { ...req.query, status: 'flagged' };
+  next();
+};
+
+const publishSingleFeedback: RequestHandler = (req, res, next) => {
+  req.body = { submissionIds: [(req.params as { submissionId: string }).submissionId] };
+  return publishFeedback(req, res, next);
+};
 
 const adminRouter = Router();
 
 adminRouter.use(requireAuth, requireRole('admin'));
 
 adminRouter.get('/overview', getOverview);
+adminRouter.get(
+  '/verifications/flagged',
+  forceFlaggedVerificationStatus,
+  validate(AdminVerificationQueueQuerySchema, 'query'),
+  listVerificationQueue,
+);
+adminRouter.patch(
+  '/verifications/:userId',
+  validate(UserParamsSchema, 'params'),
+  validate(VerificationDecisionSchema),
+  verificationDecision,
+);
+adminRouter.get('/students', forceStudentRole, validate(AdminUsersQuerySchema, 'query'), listUsers);
+adminRouter.patch(
+  '/students/:userId/suspend',
+  validate(StudentParamsSchema, 'params'),
+  validate(SuspendUserSchema),
+  suspendUser,
+);
+adminRouter.patch(
+  '/teams/:teamId/stage',
+  validate(TeamParamsSchema, 'params'),
+  validate(TeamStageActionSchema),
+  applyTeamAction,
+);
+adminRouter.post('/tokens', validate(GenerateTokenSchema), generateDepartmentToken);
+adminRouter.patch('/settings/edition', validate(UpdateEditionSchema), updateEdition);
+adminRouter.patch(
+  '/feedback/:submissionId/publish',
+  validate(SubmissionParamsSchema, 'params'),
+  publishSingleFeedback,
+);
 adminRouter.patch('/edition', validate(UpdateEditionSchema), updateEdition);
 adminRouter.post('/stage', validate(SetActiveStageSchema), setActiveStage);
 adminRouter.post('/signup', validate(ToggleSchema), toggleSignup);

@@ -1,21 +1,8 @@
 import { type RequestHandler } from 'express';
+import { ERROR_CODES, INVITE_LIMITS, TEAM_LIMITS } from '@pidec/shared';
 import { getSupabaseService } from '../../infrastructure/db/supabase.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import { logger } from '../../shared/logger/index.js';
-
-const getActiveEditionId = async (): Promise<string> => {
-  const supabase = getSupabaseService() as any;
-  const { data, error } = await supabase
-    .from('editions')
-    .select('id,team_management_locked')
-    .eq('is_active', true)
-    .is('deleted_at', null)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) throw AppError.notFound('No active edition configured');
-  return data.id;
-};
 
 const getUserProfile = async (userId: string) => {
   const supabase = getSupabaseService() as any;
@@ -41,9 +28,9 @@ export const createTeam: RequestHandler = async (req, res, next) => {
 
     if (user.is_suspended) throw AppError.forbidden('Suspended users cannot create teams');
     if (user.verification_status !== 'verified') {
-      throw AppError.forbidden('Only verified users can create teams');
+      throw new AppError(ERROR_CODES.VERIFICATION_PENDING, 'Only verified users can create teams');
     }
-    if (user.team_id) throw AppError.validation('You are already in a team');
+    if (user.team_id) throw new AppError(ERROR_CODES.ALREADY_IN_TEAM, 'You are already in a team');
 
     const { data: edition, error: editionError } = await supabase
       .from('editions')
@@ -55,7 +42,7 @@ export const createTeam: RequestHandler = async (req, res, next) => {
     if (editionError) throw editionError;
     if (!edition) throw AppError.notFound('No active edition configured');
     if (edition.team_management_locked) {
-      throw AppError.forbidden('Team management is locked for the active stage');
+      throw new AppError(ERROR_CODES.TEAM_LOCKED, 'Team management is locked for the active stage');
     }
 
     const { data: team, error } = await supabase
@@ -217,7 +204,7 @@ export const sendInvite: RequestHandler = async (req, res, next) => {
 
     if (teamError) throw teamError;
     if (!team) throw AppError.notFound('Team not found');
-    if (team.leader_id !== sender.id) throw AppError.forbidden('Only team leader can send invites');
+    if (team.leader_id !== sender.id) throw new AppError(ERROR_CODES.ONLY_LEADER, 'Only team leader can send invites');
 
     const { data: edition, error: editionError } = await supabase
       .from('editions')
@@ -228,7 +215,18 @@ export const sendInvite: RequestHandler = async (req, res, next) => {
 
     if (editionError) throw editionError;
     if (!edition) throw AppError.notFound('No active edition configured');
-    if (edition.team_management_locked) throw AppError.forbidden('Team management is locked');
+    if (edition.team_management_locked) throw new AppError(ERROR_CODES.TEAM_LOCKED, 'Team management is locked');
+
+    const { data: currentMembers, error: currentMembersError } = await supabase
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('team_id', team.id)
+      .is('deleted_at', null);
+
+    if (currentMembersError) throw currentMembersError;
+    if ((currentMembers.count ?? 0) >= TEAM_LIMITS.MAX_MEMBERS) {
+      throw new AppError(ERROR_CODES.TEAM_FULL, 'Team already has the maximum number of members');
+    }
 
     const { data: invitee, error: inviteeError } = await supabase
       .from('users')
@@ -239,12 +237,26 @@ export const sendInvite: RequestHandler = async (req, res, next) => {
 
     if (inviteeError) throw inviteeError;
     if (!invitee) throw AppError.notFound('Invitee not found');
-    if (invitee.team_id) throw AppError.validation('Invitee already belongs to a team');
+    if (invitee.team_id) throw new AppError(ERROR_CODES.ALREADY_IN_TEAM, 'Invitee already belongs to a team');
     if (invitee.department !== team.department) {
-      throw AppError.validation('Invitee must be from the same department');
+      throw new AppError(ERROR_CODES.WRONG_DEPARTMENT, 'Invitee must be from the same department');
     }
 
-    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    const { data: existingInvite, error: existingInviteError } = await supabase
+      .from('team_invites')
+      .select('id')
+      .eq('team_id', team.id)
+      .eq('invitee_id', inviteeId)
+      .eq('status', 'pending')
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (existingInviteError) throw existingInviteError;
+    if (existingInvite) {
+      throw new AppError(ERROR_CODES.DUPLICATE_ENTRY, 'A pending invite already exists for this user');
+    }
+
+    const expiresAt = new Date(Date.now() + INVITE_LIMITS.EXPIRY_MS).toISOString();
 
     const { data: created, error } = await supabase
       .from('team_invites')
@@ -305,7 +317,31 @@ export const respondInvite: RequestHandler = async (req, res, next) => {
         .from('team_invites')
         .update({ status: 'expired', responded_at: new Date().toISOString() } as never)
         .eq('id', invite.id);
-      throw AppError.validation('Invite has expired');
+      throw new AppError(ERROR_CODES.INVITE_EXPIRED, 'Invite has expired');
+    }
+
+    if (status === 'accepted') {
+      const [{ data: team, error: teamError }, { count: memberCount, error: memberCountError }] =
+        await Promise.all([
+          supabase
+            .from('teams')
+            .select('id')
+            .eq('id', invite.team_id)
+            .is('deleted_at', null)
+            .maybeSingle(),
+          supabase
+            .from('users')
+            .select('id', { count: 'exact', head: true })
+            .eq('team_id', invite.team_id)
+            .is('deleted_at', null),
+        ]);
+
+      if (teamError) throw teamError;
+      if (memberCountError) throw memberCountError;
+      if (!team) throw AppError.notFound('Team not found');
+      if ((memberCount ?? 0) >= TEAM_LIMITS.MAX_MEMBERS) {
+        throw new AppError(ERROR_CODES.TEAM_FULL, 'Team already has the maximum number of members');
+      }
     }
 
     const now = new Date().toISOString();
@@ -337,11 +373,30 @@ export const respondInvite: RequestHandler = async (req, res, next) => {
   }
 };
 
+export const acceptInvite: RequestHandler = async (req, res, next) => {
+  req.body = {
+    inviteId: (req.params as { id: string }).id,
+    status: 'accepted',
+  };
+  return respondInvite(req, res, next);
+};
+
+export const declineInvite: RequestHandler = async (req, res, next) => {
+  req.body = {
+    inviteId: (req.params as { id: string }).id,
+    status: 'declined',
+  };
+  return respondInvite(req, res, next);
+};
+
 export const removeMember: RequestHandler = async (req, res, next) => {
   try {
     if (!req.user) throw AppError.unauthenticated();
 
-    const { userId } = req.body as { userId: string };
+    const body = req.body as { userId?: string };
+    const params = req.params as { userId?: string };
+    const userId = body.userId ?? params.userId;
+    if (!userId) throw AppError.validation('User id is required');
     if (userId === req.user.id) throw AppError.validation('Leader cannot remove self');
 
     const supabase = getSupabaseService() as any;
@@ -357,7 +412,7 @@ export const removeMember: RequestHandler = async (req, res, next) => {
 
     if (teamError) throw teamError;
     if (!team) throw AppError.notFound('Team not found');
-    if (team.leader_id !== req.user.id) throw AppError.forbidden('Only leader can remove members');
+    if (team.leader_id !== req.user.id) throw new AppError(ERROR_CODES.ONLY_LEADER, 'Only leader can remove members');
 
     const { data: edition, error: editionError } = await supabase
       .from('editions')
@@ -368,7 +423,7 @@ export const removeMember: RequestHandler = async (req, res, next) => {
 
     if (editionError) throw editionError;
     if (!edition) throw AppError.notFound('No active edition configured');
-    if (edition.team_management_locked) throw AppError.forbidden('Team management is locked');
+    if (edition.team_management_locked) throw new AppError(ERROR_CODES.TEAM_LOCKED, 'Team management is locked');
 
     const { error: removeError } = await supabase
       .from('users')
@@ -402,7 +457,7 @@ export const dissolveTeam: RequestHandler = async (req, res, next) => {
 
     if (teamError) throw teamError;
     if (!team) throw AppError.notFound('Team not found');
-    if (team.leader_id !== req.user.id) throw AppError.forbidden('Only leader can dissolve team');
+    if (team.leader_id !== req.user.id) throw new AppError(ERROR_CODES.ONLY_LEADER, 'Only leader can dissolve team');
 
     const { data: edition, error: editionError } = await supabase
       .from('editions')
@@ -413,7 +468,7 @@ export const dissolveTeam: RequestHandler = async (req, res, next) => {
 
     if (editionError) throw editionError;
     if (!edition) throw AppError.notFound('No active edition configured');
-    if (edition.team_management_locked) throw AppError.forbidden('Team management is locked');
+    if (edition.team_management_locked) throw new AppError(ERROR_CODES.TEAM_LOCKED, 'Team management is locked');
 
     const now = new Date().toISOString();
 
@@ -434,6 +489,20 @@ export const dissolveTeam: RequestHandler = async (req, res, next) => {
     res.status(200).json({
       status: 'success',
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const dissolveMyTeam: RequestHandler = async (req, res, next) => {
+  try {
+    if (!req.user) throw AppError.unauthenticated();
+
+    const leader = await getUserProfile(req.user.id);
+    if (!leader.team_id) throw AppError.validation('You are not in a team');
+
+    req.params.teamId = leader.team_id;
+    return dissolveTeam(req, res, next);
   } catch (err) {
     next(err);
   }

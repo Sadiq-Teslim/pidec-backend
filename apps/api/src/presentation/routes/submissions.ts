@@ -4,18 +4,25 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import {
   listMySubmissions,
+  submitCurrentStage,
   submitStage1,
   submitStage2,
   submitStage3,
 } from '../controllers/submission-controller.js';
+import { getSubmissionFeedback } from '../controllers/feedback-controller.js';
+import { UuidSchema } from '@pidec/shared';
+import { z } from 'zod';
 
 const submissionRouter = Router();
 
 submissionRouter.use(requireAuth, requireRole('student'));
 
 submissionRouter.get('/me', listMySubmissions);
+submissionRouter.get('/my', listMySubmissions);
+submissionRouter.post('/', submitCurrentStage);
 submissionRouter.post('/stage-1', validate(Stage1SubmitSchema), submitStage1);
 submissionRouter.post('/stage-2', validate(Stage2SubmitSchema), submitStage2);
 submissionRouter.post('/stage-3', validate(Stage3SubmitSchema), submitStage3);
+submissionRouter.get('/:id/feedback', validate(z.object({ id: UuidSchema }), 'params'), getSubmissionFeedback);
 
 export { submissionRouter };

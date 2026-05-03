@@ -6,7 +6,9 @@ import { validate } from '../middleware/validate.js';
 import {
   getJudgeInfo,
   listJudgeSubmissions,
+  pickDepartmentRepresentative,
   pickStage1Representative,
+  submitSubmissionScore,
   submitStage2Score,
 } from '../controllers/judge-controller.js';
 
@@ -34,5 +36,17 @@ judgeRouter.post(
   pickStage1Representative,
 );
 judgeRouter.post('/stage-2/score', validate(Stage2ScoreWithSubmissionSchema), submitStage2Score);
+judgeRouter.post(
+  '/scores/:submissionId',
+  validate(z.object({ submissionId: UuidSchema }), 'params'),
+  validate(Stage2ScoreSchema),
+  submitSubmissionScore,
+);
+judgeRouter.post(
+  '/selections/:deptId',
+  validate(z.object({ deptId: z.string().min(1) }), 'params'),
+  validate(z.object({ submissionId: UuidSchema, comments: z.string().trim().max(5000).optional() })),
+  pickDepartmentRepresentative,
+);
 
 export { judgeRouter };

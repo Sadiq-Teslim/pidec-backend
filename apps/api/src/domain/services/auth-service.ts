@@ -11,6 +11,7 @@ import {
 import { getEmailService } from '../../infrastructure/email/resend-email-service.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import type { DbUser } from '@pidec/db-types';
+import { ERROR_CODES } from '@pidec/shared';
 
 export interface AuthTokens {
   accessToken: string;
@@ -62,7 +63,7 @@ export class AuthService {
     // Check if user already exists
     const existing = await this.authRepository.findByEmail(email);
     if (existing) {
-      throw AppError.validation('Email already registered');
+      throw new AppError(ERROR_CODES.DUPLICATE_ENTRY, 'Email already registered');
     }
 
     // Hash password
@@ -95,22 +96,25 @@ export class AuthService {
     // Find user
     const user = await this.authRepository.findByEmail(email);
     if (!user) {
-      throw AppError.validation('Invalid email or password');
+      throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 'Invalid email or password');
     }
 
     // Check if user is suspended/inactive
     if (user.deleted_at) {
       throw AppError.forbidden('Account has been deactivated');
     }
+    if (user.is_suspended) {
+      throw new AppError(ERROR_CODES.ACCOUNT_SUSPENDED, 'Account has been suspended');
+    }
 
     // Verify password
     if (!user.password_hash) {
-      throw AppError.validation('Invalid email or password');
+      throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 'Invalid email or password');
     }
 
     const isPasswordValid = await verifyPassword(password, user.password_hash);
     if (!isPasswordValid) {
-      throw AppError.validation('Invalid email or password');
+      throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 'Invalid email or password');
     }
 
     // Generate tokens
@@ -123,7 +127,7 @@ export class AuthService {
    * Refresh access token using a refresh token.
    * The refresh token must be valid and of type 'refresh'.
    */
-  async refresh(refreshToken: string): Promise<AuthTokens> {
+  async refresh(): Promise<AuthTokens> {
     // This will be implemented in the controller layer once token verification is added
     // For now, just throw so refresh endpoint knows what to do
     throw AppError.internal('Token refresh not yet implemented in service layer');

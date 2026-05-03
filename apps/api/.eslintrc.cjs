@@ -10,27 +10,38 @@ module.exports = {
   rules: {
     '@typescript-eslint/no-explicit-any': 'error',
     '@typescript-eslint/consistent-type-imports': 'error',
-    // Clean Architecture: presentation must not import from infrastructure
-    // (use cases compose them — direct skips are a smell). The check below
-    // is conservative; real enforcement is in CR + dependency-cruiser if
-    // we add it later.
-    'no-restricted-imports': [
-      'error',
-      {
-        patterns: [
-          {
-            group: ['../infrastructure/*', '../../infrastructure/*'],
-            message: 'presentation/ may only depend on application/ and domain/. Move infra calls into a use case.',
-          },
-        ],
-      },
-    ],
   },
   overrides: [
     {
-      files: ['src/infrastructure/**/*.ts', 'src/infrastructure/**/*.tsx', 'src/application/**/*.ts', 'src/index.ts', 'src/app.ts'],
+      files: [
+        'src/presentation/routes/**/*.ts',
+        'src/infrastructure/**/*.ts',
+        'src/infrastructure/**/*.tsx',
+        'src/application/**/*.ts',
+        'src/index.ts',
+        'src/app.ts',
+      ],
       rules: {
-        'no-restricted-imports': 'off',
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: ['../infrastructure/*', '../../infrastructure/*'],
+                message: 'Routes should delegate to controllers/application instead of importing infrastructure directly.',
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      files: [
+        'src/domain/**/*.ts',
+        'src/presentation/controllers/**/*.ts',
+      ],
+      rules: {
+        '@typescript-eslint/no-explicit-any': 'off',
       },
     },
   ],

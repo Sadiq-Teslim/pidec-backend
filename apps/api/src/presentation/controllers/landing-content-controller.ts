@@ -208,7 +208,7 @@ export const getLandingData: RequestHandler = async (_req, res, next) => {
         res.status(200).json({ status: 'success', data: fallback });
         return;
       }
-    } catch (e) {
+    } catch {
       // fall through to error handler if fallback can't be built
     }
 

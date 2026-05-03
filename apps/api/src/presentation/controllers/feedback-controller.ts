@@ -80,7 +80,9 @@ export const getSubmissionFeedback: RequestHandler = async (req, res, next) => {
   try {
     if (!req.user) throw AppError.unauthenticated();
 
-    const { submissionId } = req.params as { submissionId: string };
+    const params = req.params as { submissionId?: string; id?: string };
+    const submissionId = params.submissionId ?? params.id;
+    if (!submissionId) throw AppError.validation('Submission id is required');
     const user = await getCurrentUser(req.user.id);
     if (!user.team_id) {
       return res.status(200).json({ status: 'success', data: { feedback: null } });

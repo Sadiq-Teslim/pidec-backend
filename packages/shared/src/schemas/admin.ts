@@ -80,8 +80,9 @@ export const AdminUsersQuerySchema = z.object({
   department: z.enum(DEPARTMENTS).optional(),
   hasTeam: z.coerce.boolean().optional(),
   isSuspended: z.coerce.boolean().optional(),
+  cursor: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export const AdminTeamsQuerySchema = z.object({
@@ -89,8 +90,9 @@ export const AdminTeamsQuerySchema = z.object({
   department: z.enum(DEPARTMENTS).optional(),
   status: z.enum(['active', 'disqualified', 'under_review']).optional(),
   currentStage: z.coerce.number().int().min(1).max(3).optional(),
+  cursor: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export const AdminSubmissionsQuerySchema = z.object({
@@ -99,22 +101,25 @@ export const AdminSubmissionsQuerySchema = z.object({
   department: z.enum(DEPARTMENTS).optional(),
   teamId: UuidSchema.optional(),
   status: z.enum(['submitted', 'under_review', 'feedback_published']).optional(),
+  cursor: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export const AdminJudgesQuerySchema = z.object({
   stageScope: z.enum(JUDGE_STAGE_SCOPES).optional(),
   isActive: z.coerce.boolean().optional(),
+  cursor: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export const ListTokensQuerySchema = z.object({
   department: z.enum(DEPARTMENTS).optional(),
   includeRetired: z.coerce.boolean().optional().default(false),
+  cursor: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export const RegenerateTokenSchema = GenerateTokenSchema;
@@ -123,8 +128,9 @@ export const AdminVerificationQueueQuerySchema = z.object({
   status: z.enum(['pending', 'flagged']).optional(),
   department: z.enum(DEPARTMENTS).optional(),
   q: z.string().trim().max(120).optional(),
+  cursor: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export const Stage2CheckpointSchema = z.object({

@@ -1,7 +1,9 @@
 import { type RequestHandler } from 'express';
+import { ERROR_CODES, SESSION } from '@pidec/shared';
 import { AuthService } from '../../domain/services/auth-service.js';
 import { getVerificationWorkflowService } from '../../domain/services/verification-workflow-service.js';
-import { verifyToken, getTokenExpirySeconds } from '../../infrastructure/auth/jwt.js';
+import { verifyToken } from '../../infrastructure/auth/jwt.js';
+import { getSupabaseService } from '../../infrastructure/db/supabase.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import { logger } from '../../shared/logger/index.js';
 
@@ -16,6 +18,24 @@ const verificationWorkflowService = getVerificationWorkflowService();
 export const register: RequestHandler = async (req, res, next) => {
   try {
     const { email, password, name, role = 'student', matricNumber, department, level } = req.body;
+    const supabase = getSupabaseService();
+
+    if (role === 'student') {
+      const { data, error } = await supabase
+        .from('editions')
+        .select('id,signup_open')
+        .eq('is_active', true)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      const edition = data as { id: string; signup_open: boolean } | null;
+
+      if (error) throw error;
+      if (!edition) throw AppError.notFound('No active edition configured');
+      if (!edition.signup_open) {
+        throw AppError.forbidden('Registrations are not open');
+      }
+    }
 
     const { user, tokens } = await authService.register(
       email,
@@ -40,14 +60,14 @@ export const register: RequestHandler = async (req, res, next) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 15 * 60 * 1000, // 15 minutes
+      maxAge: SESSION.ACCESS_TOKEN_TTL_MS,
     });
 
     res.cookie('refresh-token', tokens.refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: SESSION.REFRESH_TOKEN_TTL_MS,
     });
 
     logger.info({ userId: user.id, email: user.email }, 'User registered');
@@ -84,14 +104,14 @@ export const login: RequestHandler = async (req, res, next) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 15 * 60 * 1000, // 15 minutes
+      maxAge: SESSION.ACCESS_TOKEN_TTL_MS,
     });
 
     res.cookie('refresh-token', tokens.refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: SESSION.REFRESH_TOKEN_TTL_MS,
     });
 
     logger.info({ userId: user.id, email: user.email }, 'User logged in');
@@ -146,7 +166,7 @@ export const refresh: RequestHandler = async (req, res, next) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 15 * 60 * 1000, // 15 minutes
+      maxAge: SESSION.ACCESS_TOKEN_TTL_MS,
     });
 
     logger.debug({ userId: payload.sub }, 'Access token refreshed');
@@ -154,7 +174,7 @@ export const refresh: RequestHandler = async (req, res, next) => {
     res.status(200).json({
       status: 'success',
       data: {
-        accessToken: newAccessToken,
+        refreshed: true,
       },
     });
   } catch (err) {
@@ -189,7 +209,7 @@ export const me: RequestHandler = (req, res) => {
   if (!req.user) {
     return res.status(401).json({
       status: 'error',
-      code: 'AUTH_REQUIRED',
+      code: ERROR_CODES.AUTH_REQUIRED,
       message: 'Authentication required',
     });
   }

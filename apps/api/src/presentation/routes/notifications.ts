@@ -23,6 +23,11 @@ notificationRouter.post(
   validate(NotificationParamsSchema, 'params'),
   markNotificationRead,
 );
+notificationRouter.patch(
+  '/:id/read',
+  validate(NotificationParamsSchema, 'params'),
+  markNotificationRead,
+);
 notificationRouter.post('/read-all', markAllNotificationsRead);
 
 export { notificationRouter };

@@ -46,6 +46,25 @@ const sendCsv = (res: any, filename: string, rows: Array<Record<string, unknown>
   res.status(200).send(toCsv(rows, columns));
 };
 
+const getCursorPage = <T extends { created_at?: string | null; submitted_at?: string | null }>(
+  rows: T[],
+  limit: number,
+  cursorField: 'created_at' | 'submitted_at',
+) => {
+  const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore ? (items[items.length - 1]?.[cursorField] ?? null) : null;
+
+  return {
+    items,
+    meta: {
+      pageSize: limit,
+      hasMore,
+      nextCursor,
+    },
+  };
+};
+
 export const listUsers: RequestHandler = async (req, res, next) => {
   try {
     const {
@@ -55,6 +74,7 @@ export const listUsers: RequestHandler = async (req, res, next) => {
       department,
       hasTeam,
       isSuspended,
+      cursor,
       limit,
       offset,
     } = req.query as any;
@@ -62,7 +82,10 @@ export const listUsers: RequestHandler = async (req, res, next) => {
     const offsetNumber = Number(offset ?? 0);
 
     const supabase = getSupabaseService() as any;
-    let query = supabase.from('users').select('*', { count: 'exact' }).is('deleted_at', null);
+    let query = supabase
+      .from('users')
+      .select('*', { count: cursor ? undefined : 'exact' })
+      .is('deleted_at', null);
 
     if (q) query = query.or(`name.ilike.%${q}%,email.ilike.%${q}%,matric_number.ilike.%${q}%`);
     if (role) query = query.eq('role', role);
@@ -71,11 +94,26 @@ export const listUsers: RequestHandler = async (req, res, next) => {
     if (typeof isSuspended === 'boolean') query = query.eq('is_suspended', isSuspended);
     if (typeof hasTeam === 'boolean') query = hasTeam ? query.not('team_id', 'is', null) : query.is('team_id', null);
 
-    const { data, count, error } = await query
-      .order('created_at', { ascending: false })
-      .range(offsetNumber, offsetNumber + limitNumber - 1);
+    query = query.order('created_at', { ascending: false });
+    if (cursor) {
+      query = query.lt('created_at', cursor).limit(limitNumber + 1);
+    } else {
+      query = query.range(offsetNumber, offsetNumber + limitNumber - 1);
+    }
+
+    const { data, count, error } = await query;
 
     if (error) throw error;
+
+    if (cursor) {
+      const page = getCursorPage(data ?? [], limitNumber, 'created_at');
+      res.status(200).json({
+        status: 'success',
+        data: { users: page.items },
+        meta: page.meta,
+      });
+      return;
+    }
 
     res.status(200).json({
       status: 'success',
@@ -96,7 +134,7 @@ export const listUsers: RequestHandler = async (req, res, next) => {
 
 export const listTeams: RequestHandler = async (req, res, next) => {
   try {
-    const { q, department, status, currentStage, limit, offset } = req.query as any;
+    const { q, department, status, currentStage, cursor, limit, offset } = req.query as any;
     const limitNumber = Number(limit ?? 20);
     const offsetNumber = Number(offset ?? 0);
 
@@ -105,7 +143,7 @@ export const listTeams: RequestHandler = async (req, res, next) => {
 
     let query = supabase
       .from('teams')
-      .select('*, leader:users!teams_leader_id_fkey(id,name,email)', { count: 'exact' })
+      .select('*, leader:users!teams_leader_id_fkey(id,name,email)', { count: cursor ? undefined : 'exact' })
       .eq('edition_id', edition.id)
       .is('deleted_at', null);
 
@@ -114,13 +152,20 @@ export const listTeams: RequestHandler = async (req, res, next) => {
     if (status) query = query.eq('status', status);
     if (typeof currentStage === 'number') query = query.eq('current_stage', currentStage);
 
-    const { data, count, error } = await query
-      .order('created_at', { ascending: false })
-      .range(offsetNumber, offsetNumber + limitNumber - 1);
+    query = query.order('created_at', { ascending: false });
+    if (cursor) {
+      query = query.lt('created_at', cursor).limit(limitNumber + 1);
+    } else {
+      query = query.range(offsetNumber, offsetNumber + limitNumber - 1);
+    }
+
+    const { data, count, error } = await query;
 
     if (error) throw error;
 
-    const teamIds = (data ?? []).map((team: { id: string }) => team.id);
+    const teamPageRows = cursor ? getCursorPage(data ?? [], limitNumber, 'created_at') : null;
+    const pageRows = teamPageRows?.items ?? data ?? [];
+    const teamIds = pageRows.map((team: { id: string }) => team.id);
     const memberCounts = new Map<string, number>();
 
     if (teamIds.length > 0) {
@@ -138,10 +183,19 @@ export const listTeams: RequestHandler = async (req, res, next) => {
       }
     }
 
-    const teams = (data ?? []).map((team: any) => ({
+    const teams = pageRows.map((team: any) => ({
       ...team,
       memberCount: memberCounts.get(team.id) ?? 0,
     }));
+
+    if (teamPageRows) {
+      res.status(200).json({
+        status: 'success',
+        data: { teams },
+        meta: teamPageRows.meta,
+      });
+      return;
+    }
 
     res.status(200).json({
       status: 'success',
@@ -162,7 +216,7 @@ export const listTeams: RequestHandler = async (req, res, next) => {
 
 export const listSubmissions: RequestHandler = async (req, res, next) => {
   try {
-    const { q, stage, department, teamId, status, limit, offset } = req.query as any;
+    const { q, stage, department, teamId, status, cursor, limit, offset } = req.query as any;
     const limitNumber = Number(limit ?? 20);
     const offsetNumber = Number(offset ?? 0);
 
@@ -172,7 +226,7 @@ export const listSubmissions: RequestHandler = async (req, res, next) => {
     let query = supabase
       .from('submissions')
       .select('*, teams!inner(id,name,department,status), users!submissions_submitted_by_fkey(id,name,email)', {
-        count: 'exact',
+        count: cursor ? undefined : 'exact',
       })
       .eq('edition_id', edition.id)
       .is('deleted_at', null);
@@ -183,11 +237,26 @@ export const listSubmissions: RequestHandler = async (req, res, next) => {
     if (department) query = query.eq('teams.department', department);
     if (q) query = query.or(`video_link.ilike.%${q}%,teams.name.ilike.%${q}%`);
 
-    const { data, count, error } = await query
-      .order('submitted_at', { ascending: false })
-      .range(offsetNumber, offsetNumber + limitNumber - 1);
+    query = query.order('submitted_at', { ascending: false });
+    if (cursor) {
+      query = query.lt('submitted_at', cursor).limit(limitNumber + 1);
+    } else {
+      query = query.range(offsetNumber, offsetNumber + limitNumber - 1);
+    }
+
+    const { data, count, error } = await query;
 
     if (error) throw error;
+
+    if (cursor) {
+      const page = getCursorPage(data ?? [], limitNumber, 'submitted_at');
+      res.status(200).json({
+        status: 'success',
+        data: { submissions: page.items },
+        meta: page.meta,
+      });
+      return;
+    }
 
     res.status(200).json({
       status: 'success',
@@ -208,7 +277,7 @@ export const listSubmissions: RequestHandler = async (req, res, next) => {
 
 export const listJudges: RequestHandler = async (req, res, next) => {
   try {
-    const { stageScope, isActive, limit, offset } = req.query as any;
+    const { stageScope, isActive, cursor, limit, offset } = req.query as any;
     const limitNumber = Number(limit ?? 20);
     const offsetNumber = Number(offset ?? 0);
 
@@ -217,17 +286,32 @@ export const listJudges: RequestHandler = async (req, res, next) => {
 
     let query = supabase
       .from('judges')
-      .select('*', { count: 'exact' })
+      .select('*', { count: cursor ? undefined : 'exact' })
       .eq('edition_id', edition.id);
 
     if (stageScope) query = query.eq('stage_scope', stageScope);
     if (typeof isActive === 'boolean') query = query.eq('is_active', isActive);
 
-    const { data, count, error } = await query
-      .order('created_at', { ascending: false })
-      .range(offsetNumber, offsetNumber + limitNumber - 1);
+    query = query.order('created_at', { ascending: false });
+    if (cursor) {
+      query = query.lt('created_at', cursor).limit(limitNumber + 1);
+    } else {
+      query = query.range(offsetNumber, offsetNumber + limitNumber - 1);
+    }
+
+    const { data, count, error } = await query;
 
     if (error) throw error;
+
+    if (cursor) {
+      const page = getCursorPage(data ?? [], limitNumber, 'created_at');
+      res.status(200).json({
+        status: 'success',
+        data: { judges: page.items },
+        meta: page.meta,
+      });
+      return;
+    }
 
     res.status(200).json({
       status: 'success',
@@ -248,22 +332,40 @@ export const listJudges: RequestHandler = async (req, res, next) => {
 
 export const listTokens: RequestHandler = async (req, res, next) => {
   try {
-    const { department, includeRetired, limit, offset } = req.query as any;
+    const { department, includeRetired, cursor, limit, offset } = req.query as any;
     const limitNumber = Number(limit ?? 20);
     const offsetNumber = Number(offset ?? 0);
 
     const supabase = getSupabaseService() as any;
     const edition = await getActiveEdition();
 
-    let query = supabase.from('tokens').select('*', { count: 'exact' }).eq('edition_id', edition.id);
+    let query = supabase
+      .from('tokens')
+      .select('*', { count: cursor ? undefined : 'exact' })
+      .eq('edition_id', edition.id);
     if (!includeRetired) query = query.is('deleted_at', null);
     if (department) query = query.eq('department', department);
 
-    const { data, count, error } = await query
-      .order('created_at', { ascending: false })
-      .range(offsetNumber, offsetNumber + limitNumber - 1);
+    query = query.order('created_at', { ascending: false });
+    if (cursor) {
+      query = query.lt('created_at', cursor).limit(limitNumber + 1);
+    } else {
+      query = query.range(offsetNumber, offsetNumber + limitNumber - 1);
+    }
+
+    const { data, count, error } = await query;
 
     if (error) throw error;
+
+    if (cursor) {
+      const page = getCursorPage(data ?? [], limitNumber, 'created_at');
+      res.status(200).json({
+        status: 'success',
+        data: { tokens: page.items },
+        meta: page.meta,
+      });
+      return;
+    }
 
     res.status(200).json({
       status: 'success',
@@ -284,7 +386,7 @@ export const listTokens: RequestHandler = async (req, res, next) => {
 
 export const listVerificationQueue: RequestHandler = async (req, res, next) => {
   try {
-    const { status, department, q, limit, offset } = req.query as any;
+    const { status, department, q, cursor, limit, offset } = req.query as any;
     const limitNumber = Number(limit ?? 20);
     const offsetNumber = Number(offset ?? 0);
 
@@ -293,7 +395,7 @@ export const listVerificationQueue: RequestHandler = async (req, res, next) => {
       .from('users')
       .select(
         'id,name,email,matric_number,department,level,verification_status,verification_method,verification_attempts,last_verification_attempt_at,created_at',
-        { count: 'exact' },
+        { count: cursor ? undefined : 'exact' },
       )
       .is('deleted_at', null)
       .in('verification_status', ['pending', 'flagged']);
@@ -302,11 +404,26 @@ export const listVerificationQueue: RequestHandler = async (req, res, next) => {
     if (department) query = query.eq('department', department);
     if (q) query = query.or(`name.ilike.%${q}%,email.ilike.%${q}%,matric_number.ilike.%${q}%`);
 
-    const { data, count, error } = await query
-      .order('last_verification_attempt_at', { ascending: true, nullsFirst: false })
-      .range(offsetNumber, offsetNumber + limitNumber - 1);
+    query = query.order('created_at', { ascending: false });
+    if (cursor) {
+      query = query.lt('created_at', cursor).limit(limitNumber + 1);
+    } else {
+      query = query.range(offsetNumber, offsetNumber + limitNumber - 1);
+    }
+
+    const { data, count, error } = await query;
 
     if (error) throw error;
+
+    if (cursor) {
+      const page = getCursorPage(data ?? [], limitNumber, 'created_at');
+      res.status(200).json({
+        status: 'success',
+        data: { queue: page.items },
+        meta: page.meta,
+      });
+      return;
+    }
 
     res.status(200).json({
       status: 'success',

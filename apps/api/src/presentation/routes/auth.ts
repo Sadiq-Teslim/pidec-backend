@@ -42,6 +42,12 @@ authRouter.post(
   parseVerificationDocumentUpload,
   uploadVerificationDocument,
 );
+authRouter.post(
+  '/reupload-doc',
+  requireAuth,
+  parseVerificationDocumentUpload,
+  uploadVerificationDocument,
+);
 authRouter.get('/verification-status', requireAuth, getVerificationStatus);
 
 export { authRouter };

@@ -139,7 +139,7 @@ export class VerificationWorkflowService {
 
   private normalizeMatric(matric: string | null): string {
     if (!matric) return '';
-    return matric.replace(/[\s\-\/]/g, '').toUpperCase();
+    return matric.replace(/[\s/-]/g, '').toUpperCase();
   }
 
   private normalizeName(name: string | null): string {

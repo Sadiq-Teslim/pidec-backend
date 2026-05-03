@@ -139,6 +139,38 @@ export const pickStage1Representative: RequestHandler = async (req, res, next) =
   }
 };
 
+export const pickDepartmentRepresentative: RequestHandler = async (req, res, next) => {
+  try {
+    if (!req.user) throw AppError.unauthenticated();
+
+    const { deptId } = req.params as { deptId: string };
+    const { submissionId, comments } = req.body as { submissionId?: string; comments?: string };
+    if (!submissionId) throw AppError.validation('Submission id is required');
+
+    const supabase = getSupabaseService() as any;
+    const { data: submission, error } = await supabase
+      .from('submissions')
+      .select('id, teams!inner(department)')
+      .eq('id', submissionId)
+      .eq('stage', 1)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!submission) throw AppError.notFound('Stage 1 submission not found');
+
+    const submissionDepartment = (submission as { teams: { department: string } }).teams.department;
+    if (submissionDepartment !== deptId) {
+      throw AppError.validation('Submission does not belong to the requested department');
+    }
+
+    req.body = { submissionId, comments };
+    return pickStage1Representative(req, res, next);
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const submitStage2Score: RequestHandler = async (req, res, next) => {
   try {
     if (!req.user) throw AppError.unauthenticated();
@@ -209,4 +241,12 @@ export const submitStage2Score: RequestHandler = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+export const submitSubmissionScore: RequestHandler = async (req, res, next) => {
+  req.body = {
+    ...(req.body as Record<string, unknown>),
+    submissionId: (req.params as { submissionId: string }).submissionId,
+  };
+  return submitStage2Score(req, res, next);
 };

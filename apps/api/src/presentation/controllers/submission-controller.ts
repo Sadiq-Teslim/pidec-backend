@@ -1,4 +1,11 @@
 import { type RequestHandler } from 'express';
+import {
+  ERROR_CODES,
+  Stage1SubmitSchema,
+  Stage2SubmitSchema,
+  Stage3SubmitSchema,
+  TEAM_LIMITS,
+} from '@pidec/shared';
 import { getSupabaseService } from '../../infrastructure/db/supabase.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import { logger } from '../../shared/logger/index.js';
@@ -51,14 +58,33 @@ const assertLeaderCanSubmit = async (userId: string, expectedStage: 1 | 2 | 3) =
 
   const [team, edition] = await Promise.all([getTeam(user.team_id), getActiveEdition()]);
 
-  if (team.leader_id !== user.id) throw AppError.forbidden('Only team leader can submit');
+  if (team.leader_id !== user.id) throw new AppError(ERROR_CODES.ONLY_LEADER, 'Only team leader can submit');
   if (team.status !== 'active') throw AppError.forbidden('Team is not active');
-  if (!edition.submission_window_open) throw AppError.forbidden('Submission window is closed');
+  if (!edition.submission_window_open) {
+    throw new AppError(ERROR_CODES.SUBMISSION_WINDOW_CLOSED, 'Submission window is closed');
+  }
   if (edition.active_stage !== expectedStage) {
-    throw AppError.forbidden(`Only Stage ${edition.active_stage} submissions are currently open`);
+    throw new AppError(
+      ERROR_CODES.STAGE_CLOSED,
+      `Only Stage ${edition.active_stage} submissions are currently open`,
+    );
   }
 
   const supabase = getSupabaseService() as any;
+  const { count: memberCount, error: memberCountError } = await supabase
+    .from('users')
+    .select('id', { count: 'exact', head: true })
+    .eq('team_id', team.id)
+    .is('deleted_at', null);
+
+  if (memberCountError) throw memberCountError;
+  if ((memberCount ?? 0) < TEAM_LIMITS.MIN_MEMBERS) {
+    throw new AppError(ERROR_CODES.TEAM_TOO_SMALL, 'Team must have at least 3 members to submit');
+  }
+  if ((memberCount ?? 0) > TEAM_LIMITS.MAX_MEMBERS) {
+    throw new AppError(ERROR_CODES.TEAM_FULL, 'Team exceeds the maximum allowed number of members');
+  }
+
   const { data: existing, error: existingError } = await supabase
     .from('submissions')
     .select('*')
@@ -128,9 +154,9 @@ export const submitStage1: RequestHandler = async (req, res, next) => {
       .maybeSingle();
 
     if (tokenError) throw tokenError;
-    if (!tokenRow) throw AppError.validation('Invalid submission token');
+    if (!tokenRow) throw new AppError(ERROR_CODES.INVALID_TOKEN, 'Invalid submission token');
     if (tokenRow.expires_at && new Date(tokenRow.expires_at).getTime() < Date.now()) {
-      throw AppError.validation('Submission token has expired');
+      throw new AppError(ERROR_CODES.INVALID_TOKEN, 'Submission token has expired');
     }
 
     const { data: submission, error } = await supabase
@@ -152,6 +178,16 @@ export const submitStage1: RequestHandler = async (req, res, next) => {
       .single();
 
     if (error) throw error;
+
+    await supabase.from('notifications').insert([
+      {
+        user_id: team.leader_id,
+        type: 'submission_confirmed',
+        title: 'Submission received',
+        message: `Your Stage 1 submission for ${team.name} has been received.`,
+        action_url: '/dashboard',
+      },
+    ] as never[]);
 
     await supabase
       .from('tokens')
@@ -213,6 +249,16 @@ export const submitStage2: RequestHandler = async (req, res, next) => {
 
     if (error) throw error;
 
+    await supabase.from('notifications').insert([
+      {
+        user_id: team.leader_id,
+        type: 'submission_confirmed',
+        title: 'Submission received',
+        message: `Your Stage 2 submission for ${team.name} has been received.`,
+        action_url: '/dashboard',
+      },
+    ] as never[]);
+
     logger.info(
       { submissionId: submission.id, teamId: team.id, stage: 2 },
       'Stage 2 submission created',
@@ -263,6 +309,16 @@ export const submitStage3: RequestHandler = async (req, res, next) => {
 
     if (error) throw error;
 
+    await supabase.from('notifications').insert([
+      {
+        user_id: team.leader_id,
+        type: 'submission_confirmed',
+        title: 'Submission received',
+        message: `Your Stage 3 submission for ${team.name} has been received.`,
+        action_url: '/dashboard',
+      },
+    ] as never[]);
+
     logger.info(
       { submissionId: submission.id, teamId: team.id, stage: 3 },
       'Stage 3 submission created',
@@ -272,6 +328,31 @@ export const submitStage3: RequestHandler = async (req, res, next) => {
       status: 'success',
       data: { submission },
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const submitCurrentStage: RequestHandler = async (req, res, next) => {
+  try {
+    const edition = await getActiveEdition();
+
+    if (edition.active_stage === 1) {
+      req.body = Stage1SubmitSchema.parse(req.body);
+      return submitStage1(req, res, next);
+    }
+
+    if (edition.active_stage === 2) {
+      req.body = Stage2SubmitSchema.parse(req.body);
+      return submitStage2(req, res, next);
+    }
+
+    if (edition.active_stage === 3) {
+      req.body = Stage3SubmitSchema.parse(req.body);
+      return submitStage3(req, res, next);
+    }
+
+    throw AppError.forbidden('No active submission stage is currently open');
   } catch (err) {
     next(err);
   }
