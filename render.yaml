@@ -7,6 +7,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: API_HOST
+        value: 0.0.0.0
       # Important: Define all these secrets in your Render Dashboard
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
